@@ -184,6 +184,14 @@ func getRdr(out *C.struct_ArrowArrayStream) (array.RecordReader, error) {
 	return rdr.(array.RecordReader), nil
 }
 
+func getSchema(out *C.struct_ArrowSchema) (*arrow.Schema, error) {
+	schema, err := cdata.ImportCArrowSchema((*cdata.CArrowSchema)(unsafe.Pointer(out)))
+	if err != nil {
+		return nil, err
+	}
+	return schema, nil
+}
+
 type cnxn struct {
 	conn *C.struct_AdbcConnection
 }
@@ -205,12 +213,61 @@ func (c *cnxn) GetInfo(_ context.Context, infoCodes []adbc.InfoCode) (array.Reco
 	return getRdr(&out)
 }
 
-func (c *cnxn) GetObjects(_ context.Context, depth adbc.ObjectDepth, catalog, dbSchema, tableName, columnName *string, tableType []string) (array.RecordReader, error) {
-	return nil, &adbc.Error{Code: adbc.StatusNotImplemented}
+func (c *cnxn) GetObjects(_ context.Context, depth adbc.ObjectDepth, catalog *string, dbSchema *string, tableName *string, columnName *string, tableType []string) (array.RecordReader, error) {
+	var (
+		out         C.struct_ArrowArrayStream
+		err         C.struct_AdbcError
+		ccatalog    *C.char
+		cdbschema   *C.char
+		ctablename  *C.char
+		ccolumnname *C.char
+	)
+	if catalog != nil {
+		ccatalog = C.CString(*catalog)
+		defer C.free(unsafe.Pointer(ccatalog))
+	}
+	if dbSchema != nil {
+		cdbschema = C.CString(*dbSchema)
+		defer C.free(unsafe.Pointer(cdbschema))
+	}
+	if tableName != nil {
+		ctablename = C.CString(*tableName)
+		defer C.free(unsafe.Pointer(ctablename))
+	}
+	if columnName != nil {
+		ccolumnname = C.CString(*columnName)
+		defer C.free(unsafe.Pointer(ccolumnname))
+	}
+
+	if code := adbc.Status(C.AdbcConnectionGetObjects(c.conn, C.int(int(depth)), ccatalog, cdbschema, ctablename, nil, ccolumnname, &out, &err)); code != adbc.StatusOK {
+		return nil, toAdbcError(code, &err)
+	}
+
+	return getRdr(&out)
 }
 
-func (c *cnxn) GetTableSchema(_ context.Context, catalog, dbSchema *string, tableName string) (*arrow.Schema, error) {
-	return nil, &adbc.Error{Code: adbc.StatusNotImplemented}
+func (c *cnxn) GetTableSchema(_ context.Context, catalog *string, dbSchema *string, tableName string) (*arrow.Schema, error) {
+	var (
+		out        C.struct_ArrowSchema
+		err        C.struct_AdbcError
+		ccatalog   *C.char
+		cdbschema  *C.char
+		ctablename *C.char
+	)
+	if catalog != nil {
+		ccatalog = C.CString(*catalog)
+		defer C.free(unsafe.Pointer(ccatalog))
+	}
+	if dbSchema != nil {
+		cdbschema = C.CString(*dbSchema)
+		defer C.free(unsafe.Pointer(cdbschema))
+	}
+	ctablename = C.CString(tableName)
+	defer C.free(unsafe.Pointer(ctablename))
+	if code := adbc.Status(C.AdbcConnectionGetTableSchema(c.conn, ccatalog, cdbschema, ctablename, &out, &err)); code != adbc.StatusOK {
+		return nil, toAdbcError(code, &err)
+	}
+	return getSchema(&out)
 }
 
 func (c *cnxn) GetTableTypes(context.Context) (array.RecordReader, error) {
